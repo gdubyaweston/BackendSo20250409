@@ -7,4 +7,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\CRApp\CRApp.csproj" />
+    <ProjectReference Include="..\LoginApp\LoginApp.csproj" />
+  </ItemGroup>
+
 </Project>
