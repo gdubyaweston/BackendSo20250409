@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CRData\CRData.csproj" />
+    <ProjectReference Include="..\ServiceData\ServiceData.csproj" />
   </ItemGroup>
 
 </Project>
