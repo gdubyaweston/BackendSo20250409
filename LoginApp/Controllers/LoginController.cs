@@ -62,17 +62,45 @@ namespace LoginApp.Controllers
 
         #region Private Methods
 
-        private async Task<ServiceResponse<LoginResult>> LoginTheUser(Login li) 
+        private async Task<ServiceResponse<LoginResult>> LoginTheUser([FromBody] Login li) 
         {
             Console.WriteLine("LoginTheUser - LoginTheUser");
 
             try
             {
-                var vUser = await ValidUser(li);
-                if (vUser.Equals(true))
+                if (li == null)
+                    return new ServiceResponse<LoginResult>() { Data = null, Message = "No login information provided.", Success = false };
+                if (string.IsNullOrWhiteSpace(li.UserName))
+                    return new ServiceResponse<LoginResult>() { Data = null, Message = "No user name, email address provided.", Success = false };
+                if (string.IsNullOrWhiteSpace(li.Password))
+                    return new ServiceResponse<LoginResult>() { Data = null, Message = "No password provided.", Success = false }; ;
+
+                var user = await _userManager.FindByEmailAsync(li.UserName);
+                if (user == null)
+                    return new ServiceResponse<LoginResult>() { Data = null, Message = "Invalid user name, email address provided.", Success = false }; ;
+
+                var passwordValid = await _userManager.CheckPasswordAsync(user, li.Password);
+                if (!passwordValid)
+                    return new ServiceResponse<LoginResult>() { Data = null, Message = "No password provided.", Success = false };
+
+
+                await _signinManager.SignOutAsync();
+                // Need to ensure set RequiresTwoFactor to true!!!!!
+                // NotFiniteNumberException really, just need to set TwoFactorEnabled to true
+                var result = await _signinManager.PasswordSignInAsync(user, li.Password, false, false);
+
+                var expiresAt = DateTime.Now.AddMinutes(this._configuration.GetValue<int>("AppSettings:TokenExpires"));
+
+                if (result.RequiresTwoFactor)
                 {
-                    return new ServiceResponse<LoginResult>() { Data = null, Message = "Login Invalid vUser.", Success = false };
+                    var tftoken = await _userManager.GenerateTwoFactorTokenAsync(user, "Email");
+                    // send code
+                    if (!await SendCode(user, tftoken))
+                        return new ServiceResponse<LoginResult>() { Data = null, Message = "Unable to send code for login.", Success = false };
+
+                    return new ServiceResponse<LoginResult>() { Data = new LoginResult(user, await GetVectorsUID(user.Email), string.Empty, expiresAt, tftoken), Message = "", Success = true };
                 }
+
                 return new ServiceResponse<LoginResult>() { Data = null, Message = "Login Invalid sign in information provided.", Success = false };
             }
             catch (Exception ex)
@@ -81,10 +109,54 @@ namespace LoginApp.Controllers
             }
         }
 
-        private async Task<bool> ValidUser(Login li) 
+        private async Task<bool> SendCode(IdentityUser user, string code)
         {
-            return false;
+            var smtpServer = await GetVectorSettingString("OutgoingSmtpServer");
+            var smtpUser = await GetVectorSettingString("Info_AICEmail");
+            var smtpPassword = await GetSmtpEmailPwd("Info_AICEmailPwd");
+
+            if (string.IsNullOrWhiteSpace(smtpServer) || string.IsNullOrWhiteSpace(smtpUser) || string.IsNullOrWhiteSpace(smtpPassword))
+                return false;
+
+            return Globals.SendEmail("Two Factor Code", code, user.Email, true, smtpServer, smtpUser, smtpPassword);
         }
+
+        private async Task<string> GetVectorSettingString(string lookup)
+        {
+            var setting = string.Empty;
+
+            var query = await _dbc.tblVectorsSettings.FirstOrDefaultAsync(X => X.Item == lookup);
+            if (query != null)
+                setting = query.ItemValue;
+
+            return setting;
+        }
+
+        private async Task<string> GetSmtpEmailPwd(string lookup)
+        {
+            var pwd = string.Empty;
+
+            var spdb = new AIC_DBContextProcedures(_dbc);
+            var q = await spdb.aic_sp_GetEncrValue_tblVectorsSettingsAsync(lookup);
+            if (q != null && q.Count > 0 && q[0] != null && q[0].ItemValue != string.Empty)
+                pwd = q[0].ItemValue;
+            spdb = null;
+
+            return pwd;
+        }
+
+        private async Task<int> GetVectorsUID(string uid)
+        {
+            var vuid = 0;
+
+            var query = await _dbc.tblAIC_Users_erasemes.FirstOrDefaultAsync(X => X.email == uid);
+            if (query != null)
+                vuid = query.VectorsUid;
+
+            return vuid;
+        }
+
+
 
         private async Task<ServiceResponse<LoginResult>> LoginTheTwoStep(Login li)
         {
